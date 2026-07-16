@@ -10,6 +10,7 @@ RUN corepack enable
 # Workspace manifests first for best layer caching
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY Backend/package.json ./Backend/
+COPY Frontend/package.json ./Frontend/
 
 # Install Backend's workspace slice (includes dev deps for TypeScript build)
 RUN pnpm install --frozen-lockfile --filter ./Backend...
@@ -30,6 +31,7 @@ RUN corepack enable
 
 COPY --from=build /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
 COPY --from=build /app/Backend/package.json ./Backend/
+COPY --from=build /app/Frontend/package.json ./Frontend/
 # --ignore-scripts: skip the root `prepare: husky` lifecycle hook (husky is a devDep,
 # only relevant for local git hooks, would crash here under --prod).
 RUN pnpm install --frozen-lockfile --filter ./Backend... --prod --ignore-scripts

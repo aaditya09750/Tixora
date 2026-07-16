@@ -38,7 +38,8 @@ services:
 
   web:
     build:
-      context: ./Frontend
+      context: .
+      dockerfile: ./Frontend/Dockerfile
       args:
         VITE_API_URL: /api
     restart: unless-stopped
