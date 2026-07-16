@@ -16,6 +16,7 @@ RUN pnpm install --frozen-lockfile --filter ./Backend...
 
 # Backend source
 COPY Backend/tsconfig.json ./Backend/
+COPY Backend/prisma ./Backend/prisma
 COPY Backend/src ./Backend/src
 
 # Compile TS → dist/
@@ -34,6 +35,7 @@ COPY --from=build /app/Backend/package.json ./Backend/
 RUN pnpm install --frozen-lockfile --filter ./Backend... --prod --ignore-scripts
 
 COPY --from=build /app/Backend/dist ./Backend/dist
+COPY --from=build /app/Backend/prisma ./Backend/prisma
 
 RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
 USER app
