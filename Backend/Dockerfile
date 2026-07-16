@@ -37,6 +37,8 @@ RUN pnpm install --frozen-lockfile --filter ./Backend... --prod --ignore-scripts
 COPY --from=build /app/Backend/dist ./Backend/dist
 COPY --from=build /app/Backend/prisma ./Backend/prisma
 
+RUN pnpm --filter ./Backend prisma:generate
+
 RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
 USER app
 
