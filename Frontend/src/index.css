@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light mode (default) — Slate-50 page background and soft cohesive card backings */
+    --c-bg: 248 250 252; /* #F8FAFC premium desaturated light bg */
+    --c-surface: 255 255 255; /* white sidebar */
+    --c-fg: 15 23 42; /* #0F172A (Slate-900) primary text */
+    --c-ink: #1e293b; /* #1E293B (Slate-800) card text */
+    --c-surface-card: rgb(255, 255, 255); /* solid white elevated cards */
+    --c-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.03), 0 4px 12px rgba(15, 23, 42, 0.04);
+    --c-border-strong: rgba(15, 23, 42, 0.06);
+    /* KPI tile bgs — refined to solid white in light mode for a clean unified dashboard */
+    --c-stat-views: #ffffff;
+    --c-stat-visits: #ffffff;
+    --c-stat-newUsers: #ffffff;
+    --c-stat-activeUsers: #ffffff;
+  }
+
+  :root.dark {
+    /* Dark mode — unchanged from prior implementation */
+    --c-bg: 28 28 28;
+    --c-surface: 28 28 28;
+    --c-fg: 255 255 255;
+    --c-ink: #1c1c1c;
+    --c-surface-card: rgba(255, 255, 255, 0.05); /* matches the original bg-primary/5 */
+    --c-shadow-card: 0 0 0 transparent; /* no elevation in dark */
+    --c-border-strong: rgba(255, 255, 255, 0.12); /* unchanged from prior dark theme */
+    /* KPI tile bgs — dark mode preserves the original pastel values */
+    --c-stat-views: #e3f5ff;
+    --c-stat-visits: #e5ecf6;
+    --c-stat-newUsers: #e3f5ff;
+    --c-stat-activeUsers: #e5ecf6;
+  }
+
+  body {
+    @apply bg-background text-primary antialiased;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-primary/10;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-primary/20;
+}
+
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}

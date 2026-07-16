@@ -1,0 +1,71 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String     @id @default(uuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         String     @default("devs") // "admin" or "devs"
+  created_at   DateTime   @default(now())
+  updated_at   DateTime   @updatedAt
+  tickets      Ticket[]
+  activities   Activity[]
+  contacts     Contact[]
+}
+
+model Ticket {
+  id             String   @id @default(uuid())
+  id_seq         Int      @unique @default(autoincrement())
+  ticket_id      String   @unique
+  customer_name  String
+  customer_email String
+  subject        String
+  description    String
+  status         String   @default("Open") // "Open", "In Progress", "Closed"
+  channel        String   @default("Portal") // "Portal", "Social Media", "Email"
+  createdBy      User     @relation(fields: [created_by_id], references: [id], onDelete: Cascade)
+  created_by_id  String
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  notes          Note[]
+}
+
+model Note {
+  id         String   @id @default(uuid())
+  ticket     Ticket   @relation(fields: [ticket_id], references: [ticket_id], onDelete: Cascade)
+  ticket_id  String
+  note_text  String
+  created_at DateTime @default(now())
+}
+
+model Activity {
+  id         String   @id @default(uuid())
+  actor      User     @relation(fields: [actor_id], references: [id], onDelete: Cascade)
+  actor_id   String
+  action     String
+  created_at DateTime @default(now())
+}
+
+model Contact {
+  id             String  @id @default(uuid())
+  name           String
+  email          String?
+  avatar         String?
+  linkedUser     User?   @relation(fields: [linked_user_id], references: [id], onDelete: SetNull)
+  linked_user_id String?
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  kind       String
+  message    String
+  audience   String
+  created_at DateTime @default(now())
+}
