@@ -42,4 +42,4 @@ USER app
 
 WORKDIR /app/Backend
 EXPOSE 4000
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/main.js"]
