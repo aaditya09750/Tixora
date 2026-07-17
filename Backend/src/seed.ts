@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -247,7 +248,32 @@ async function main() {
 
   console.log('Seeding notifications feed...');
   await prisma.notification.createMany({
-    data: [],
+    data: [
+      {
+        kind: 'user',
+        message: 'New user registered: Dev User (devs)',
+        audience: 'all',
+        created_at: new Date(now.getTime() - 24 * 3600 * 1000),
+      },
+      {
+        kind: 'bug',
+        message: 'Orlando Diggs reported ticket SLA violation on TIX-1002',
+        audience: 'devs',
+        created_at: new Date(now.getTime() - 12 * 3600 * 1000),
+      },
+      {
+        kind: 'lead-status',
+        message: 'Admin User changed status of TIX-1004 to Closed',
+        audience: 'all',
+        created_at: new Date(now.getTime() - 4 * 3600 * 1000),
+      },
+      {
+        kind: 'subscribe',
+        message: 'Webhook subscription configured for Slack notification integration',
+        audience: 'admin',
+        created_at: new Date(now.getTime() - 2 * 3600 * 1000),
+      },
+    ],
   });
 
   console.log('Database seeding complete!');

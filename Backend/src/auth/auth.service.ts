@@ -3,17 +3,39 @@ import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { env } from '../config/env.js';
 import bcrypt from 'bcryptjs';
+import { IsString, IsNotEmpty, IsEmail, IsOptional, MaxLength } from 'class-validator';
 
-export interface RegisterDto {
-  name: string;
-  email: string;
-  password?: string;
+export class RegisterDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name!: string;
+
+  @IsEmail()
+  @IsNotEmpty()
+  @MaxLength(254)
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  password!: string;
+
+  @IsOptional()
+  @IsString()
   role?: string;
 }
 
-export interface LoginDto {
-  email: string;
-  password?: string;
+export class LoginDto {
+  @IsEmail()
+  @IsNotEmpty()
+  @MaxLength(254)
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  password!: string;
 }
 
 @Injectable()

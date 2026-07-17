@@ -67,8 +67,12 @@ export class TicketsController {
   }
 
   @Get(':ticket_id')
-  async findOne(@Param('ticket_id') ticketId: string, @Headers('x-tixora-client') client?: string) {
-    const ticket = await this.ticketsService.findByTicketId(ticketId);
+  async findOne(
+    @Param('ticket_id') ticketId: string,
+    @GetUser() user: UserSession,
+    @Headers('x-tixora-client') client?: string,
+  ) {
+    const ticket = await this.ticketsService.findByTicketId(ticketId, user);
     if (client === 'web') {
       return { data: ticket };
     }

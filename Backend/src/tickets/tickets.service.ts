@@ -1,17 +1,42 @@
 import { Injectable, NotFoundException, Inject, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { Prisma } from '@prisma/client';
+import { UserSession } from '../auth/get-user.decorator.js';
+import { IsString, IsNotEmpty, IsEmail, IsOptional, MaxLength } from 'class-validator';
 
-export interface CreateTicketDto {
-  customer_name: string;
-  customer_email: string;
-  subject: string;
-  description: string;
+export class CreateTicketDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  customer_name!: string;
+
+  @IsEmail()
+  @IsNotEmpty()
+  @MaxLength(254)
+  customer_email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  subject!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  description!: string;
+
+  @IsOptional()
+  @IsString()
   channel?: string;
 }
 
-export interface UpdateTicketDto {
+export class UpdateTicketDto {
+  @IsOptional()
+  @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsString()
   notes?: string;
 }
 
@@ -173,7 +198,7 @@ export class TicketsService {
     });
   }
 
-  async findByTicketId(ticketId: string) {
+  async findByTicketId(ticketId: string, user?: UserSession) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { ticket_id: ticketId },
       include: {
@@ -185,6 +210,10 @@ export class TicketsService {
 
     if (!ticket) {
       throw new NotFoundException(`Ticket with ID ${ticketId} not found`);
+    }
+
+    if (user && user.role !== 'admin' && ticket.created_by_id !== user.id) {
+      throw new ForbiddenException('You do not have permission to view this ticket');
     }
 
     return ticket;
