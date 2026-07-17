@@ -5,7 +5,7 @@
 # Two env vars use `sync: false`, meaning Render will NOT read them from this file
 # and you MUST set them in the dashboard:
 #   - DATABASE_URL  → your Neon DB connection string
-#   - CORS_ORIGIN   → your Vercel URL once known (e.g. https://tixora.vercel.app)
+#   - CORS_ORIGIN   → your Vercel URL once known (e.g. https://tixora-orcin.vercel.app)
 #
 # JWT_SECRET uses `generateValue: true` so Render auto-generates a strong secret
 # on first deploy. Rotate it by deleting the var in the dashboard and redeploying.
@@ -41,3 +41,5 @@ services:
         value: info
       - key: BCRYPT_ROUNDS
         value: '12'
+      - key: GIT_LFS_SKIP_SMUDGE
+        value: '1'

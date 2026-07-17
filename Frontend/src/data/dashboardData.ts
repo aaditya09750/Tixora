@@ -147,7 +147,7 @@ export const KPI_METRICS = [
     value: '0',
     change: '',
     positive: true,
-    bgKey: 'totalLeads',
+    bgKey: 'views',
   },
   {
     key: 'newLeads',
@@ -155,7 +155,7 @@ export const KPI_METRICS = [
     value: '0',
     change: '',
     positive: true,
-    bgKey: 'newLeads',
+    bgKey: 'visits',
   },
   {
     key: 'qualifiedLeads',
@@ -163,7 +163,7 @@ export const KPI_METRICS = [
     value: '0',
     change: '',
     positive: true,
-    bgKey: 'qualifiedLeads',
+    bgKey: 'newUsers',
   },
   {
     key: 'conversionRate',
@@ -171,7 +171,7 @@ export const KPI_METRICS = [
     value: '0.0%',
     change: '',
     positive: true,
-    bgKey: 'conversionRate',
+    bgKey: 'activeUsers',
   },
 ] as const;
 
