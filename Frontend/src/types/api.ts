@@ -63,6 +63,7 @@ export interface TicketsQuery {
   search?: string;
   sort?: SortOrder;
   page?: number;
+  owner?: string;
 }
 
 export interface AuthResponse {

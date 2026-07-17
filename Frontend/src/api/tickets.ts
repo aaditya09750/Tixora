@@ -10,6 +10,8 @@ function toParams(query: TicketsQuery): Record<string, string | number> {
   if (query.status) params.status = query.status;
   if (query.search) params.search = query.search;
   if (query.page) params.page = query.page;
+  if (query.owner) params.owner = query.owner;
+  if (query.sort) params.sort = query.sort;
   return params;
 }
 

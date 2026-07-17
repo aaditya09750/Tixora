@@ -59,7 +59,7 @@ export class TicketsService {
   }
 
   async findAll(
-    query: { status?: string; search?: string; page?: number },
+    query: { status?: string; search?: string; page?: number; owner?: string; sort?: string },
     user?: { id: string; role: string },
   ) {
     const page = Number(query.page) || 1;
@@ -76,6 +76,12 @@ export class TicketsService {
       where.status = query.status;
     }
 
+    if (query.owner) {
+      where.createdBy = {
+        email: query.owner,
+      };
+    }
+
     if (query.search) {
       const searchLower = query.search.trim();
       where.OR = [
@@ -87,11 +93,14 @@ export class TicketsService {
       ];
     }
 
+    const orderBy =
+      query.sort === 'oldest' ? { created_at: 'asc' as const } : { created_at: 'desc' as const };
+
     const [total, items] = await Promise.all([
       this.prisma.ticket.count({ where }),
       this.prisma.ticket.findMany({
         where,
-        orderBy: { created_at: 'desc' },
+        orderBy,
         skip,
         take: limit,
       }),
@@ -125,7 +134,7 @@ export class TicketsService {
   }
 
   async findAllUnpaginated(
-    query: { status?: string; search?: string },
+    query: { status?: string; search?: string; owner?: string; sort?: string },
     user?: { id: string; role: string },
   ) {
     const where: Prisma.TicketWhereInput = {};
@@ -136,6 +145,12 @@ export class TicketsService {
 
     if (query.status) {
       where.status = query.status;
+    }
+
+    if (query.owner) {
+      where.createdBy = {
+        email: query.owner,
+      };
     }
 
     if (query.search) {
@@ -149,9 +164,12 @@ export class TicketsService {
       ];
     }
 
+    const orderBy =
+      query.sort === 'oldest' ? { created_at: 'asc' as const } : { created_at: 'desc' as const };
+
     return this.prisma.ticket.findMany({
       where,
-      orderBy: { created_at: 'desc' },
+      orderBy,
     });
   }
 

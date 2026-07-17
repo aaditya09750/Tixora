@@ -41,14 +41,19 @@ export class TicketsController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('export') isExport?: string,
+    @Query('owner') owner?: string,
+    @Query('sort') sort?: string,
     @GetUser() user?: UserSession,
     @Headers('x-tixora-client') client?: string,
   ) {
     if (client === 'web' && isExport !== 'true') {
       const pageNum = page ? parseInt(page, 10) : 1;
-      return this.ticketsService.findAll({ status, search, page: pageNum }, user);
+      return this.ticketsService.findAll({ status, search, page: pageNum, owner, sort }, user);
     }
-    const tickets = await this.ticketsService.findAllUnpaginated({ status, search }, user);
+    const tickets = await this.ticketsService.findAllUnpaginated(
+      { status, search, owner, sort },
+      user,
+    );
     if (client === 'web') {
       return { data: tickets };
     }
