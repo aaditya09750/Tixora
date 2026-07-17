@@ -49,3 +49,7 @@ coverage/
 
 # Docker
 docker-compose.override.yml
+
+# Preview media
+Tixora-Preview.mp4
+
