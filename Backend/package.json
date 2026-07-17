@@ -20,7 +20,7 @@
     "prisma:generate": "prisma generate",
     "format": "prettier --write \"src/**/*.ts\"",
     "prisma:migrate": "prisma migrate dev --name init",
-    "postinstall": "prisma generate"
+    "postinstall": "node -e \"if (require('fs').existsSync('prisma/schema.prisma')) require('child_process').execSync('prisma generate', {stdio: 'inherit'})\""
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
