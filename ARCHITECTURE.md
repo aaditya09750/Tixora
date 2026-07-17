@@ -1,220 +1,280 @@
-# Architecture
+# Tixora System Architecture & Design
 
-How Tixora is wired together. Reading order: system context → request pipeline → primary-workflow sequence → data model → known limitations.
+This document details the system design, request execution pipelines, workflow sequences, database models, and architectural decisions governing the **Tixora Customer Support CRM**.
 
-## System context
+---
 
-```mermaid
-flowchart LR
-  user((User))
-  user -->|HTTPS, bearer JWT| web[Frontend<br/>React + Vite, Vercel or nginx]
-  web -->|JSON over /api/*| api[Backend<br/>NestJS + TypeScript, Render]
-  api -->|Prisma Client| db[(PostgreSQL - Neon DB)]
-  api -.->|stdout| logs[(structured logging)]
-  api -->|signs / verifies| jwt[[JWT HS256 + JWT_SECRET]]
-flowchart
-```
+## 1. System Context
 
-Three runtime services in the local Docker compose stack (`web`, `api`, `db`); production splits them across **Vercel** (web), **Render** (api), and **Neon DB** (db). Frontend talks to backend only through `/api/*` — in production via the configured `VITE_API_URL`.
-
-## Request pipeline (API)
+Tixora is built using a monorepo workspace containing a NestJS backend API, a React 19 frontend single-page application (SPA), and a PostgreSQL database.
 
 ```mermaid
 flowchart TB
-  req([Incoming request])
-  req --> cors[CORS middleware<br/>env.CORS_ORIGIN comma-split]
-  cors --> auth[AuthGuard<br/>JWT verify → req.user]
-  auth --> role[AdminRoute check<br/>optional admin layer]
-  role --> controller[Controller DTO Validation<br/>class-validator / DTOs]
-  controller --> svc[Service — business logic]
+  subgraph Client [Client Tier]
+    user((Support Agent / Admin))
+    web[Frontend SPA<br/>React 19 + Vite 6<br/>Hosted on Vercel / Nginx]
+  end
+
+  subgraph Service [API Tier]
+    api[Backend API Service<br/>NestJS 11 + Express<br/>Hosted on Render]
+    jwt[[JWT Service<br/>HS256 Authorization]]
+    pino[(Pino Logger<br/>Stdout / Redacted)]
+  end
+
+  subgraph Data [Data Tier]
+    db[(Database Service<br/>PostgreSQL - Neon DB)]
+  end
+
+  user -->|HTTPS, JWT| web
+  web -->|JSON REST Calls /api/*| api
+  api -->|Prisma Client| db
+  api -.->|Redacted Logs| pino
+  api -.->|Sign & Verify Claims| jwt
+```
+
+In a local environment, the services are run either directly via workspaces tooling (`pnpm dev`) or orchestrated inside Docker Compose (`web`, `api`, `db`). In production, they are distributed across Vercel (frontend), Render (backend container runtime), and Neon DB (serverless managed PostgreSQL).
+
+---
+
+## 2. API Request Lifecycle
+
+Every incoming HTTP request to the NestJS API passes through a strict execution pipeline before returning a standardized JSON envelope.
+
+```mermaid
+flowchart TD
+  req([Incoming HTTP Request]) --> cors[CORS Middleware<br/>Origin verification]
+  cors --> helmet[Helmet Middleware<br/>Security headers]
+  helmet --> comp[Compression Middleware<br/>Gzip compression]
+  comp --> auth[AuthGuard<br/>JWT decryption & claim mapping]
+  auth --> role[AdminGuard / Roles check<br/>Optional RBAC validation]
+  role --> pipes[ValidationPipe<br/>class-validator DTO sanitization]
+  pipes --> controller[Controller Layer<br/>Route mapping & query parsing]
+  controller --> svc[Service Layer<br/>Core business logic]
   svc --> db[(Prisma Client / PostgreSQL)]
+  db --> svc
   svc --> controller
-  controller --> res([JSON envelope])
-  controller -.->|throws NestJS HttpException| err[HttpExceptionFilter<br/>exception filter]
-  err --> res
-flowchart
+  controller --> res([Standard JSON Envelope<br/>{ data, meta? }])
+
+  %% Error Boundary Handling
+  controller -.->|Throws HttpException| filter[HttpExceptionFilter<br/>Global Exception Mapper]
+  svc -.->|Throws AppExceptions| filter
+  pipes -.->|Validation Failed| filter
+  filter --> errRes([Standard Error Envelope<br/>{ error }])
 ```
 
-Mounting order is handled via NestJS's standard execution pipeline: Guards → Interceptors → Pipes (Validation) → Route Handlers → Exception Filters.
+### Request Pipeline Components:
 
-Errors bubble up to the global `HttpExceptionFilter` which maps errors to a structured `{ error: { code, message, details? } }` envelope.
+1. **Middlewares**: CORS rules, Helmet security headers, and gzip compression are mounted globally in [`main.ts`](file:///c:/SharedData/Downloads/Tixora/Backend/src/main.ts).
+2. **AuthGuard**: Extracts the `Authorization` header, decrypts the Bearer JWT token using `JwtService`, validates the expiration, and populates `req.user` with the agent's identity.
+3. **Roles Check**: Enforces role constraints (`admin` or `sales`) on restricted routes (like `/api/team`).
+4. **ValidationPipe**: Automatically validates and sanitizes incoming body payloads and query parameters using DTO definitions.
+5. **HttpExceptionFilter**: Intercepts all bubbled errors and maps them to a unified format:
+   ```json
+   {
+     "error": {
+       "code": "VALIDATION_ERROR",
+       "message": "Input validation failed",
+       "details": ["customer_email must be a valid email"]
+     }
+   }
+   ```
 
-## Primary workflow — Agent creates and filters tickets
+---
+
+## 3. Core Workflow Sequences
+
+### 3.1. Agent Authentication and Ticket Creation
+
+This diagram details the flow from initial agent login to creating a new ticket with automatic sequential ID assignment (`TIX-XXXX`).
 
 ```mermaid
 sequenceDiagram
   autonumber
-  actor S as Agent / Sales user
-  participant UI as React + Zustand
-  participant AX as axios + JWT interceptor
-  participant API as NestJS Controller
+  actor Agent as Support Agent
+  participant SPA as React SPA (Zustand)
+  participant Client as Axios Client
+  participant API as NestJS API Controller
   participant SVC as TicketsService
-  participant DB as PostgreSQL
+  participant DB as PostgreSQL (Neon DB)
 
-  S->>UI: Submit register or login form
-  UI->>AX: POST /auth/register | /auth/login
-  AX->>API: HTTP + JSON body
-  API->>SVC: register / login (bcrypt + jwtService)
-  SVC->>DB: User findUnique / create
-  DB-->>SVC: record
-  SVC-->>API: { user, token }
-  API-->>UI: 201 / 200 envelope
-  UI->>UI: authStore.setSession(token, user)<br/>persist token to localStorage
+  Agent->>SPA: Submit credentials on /login
+  SPA->>Client: POST /auth/login { email, password }
+  Client->>API: Send login payload
+  API->>DB: Find user by email and verify bcrypt passwordHash
+  DB-->>API: User record (role: "sales")
+  API->>API: Generate 7-day HS256 JWT token
+  API-->>Client: Returns 200 { data: { user, token } }
+  Client-->>SPA: Update authStore & save JWT to localStorage
 
-  S->>UI: Open /tickets, type "billing" in search
-  Note over UI: useDebounce(value, 400ms)
-  UI->>AX: GET /tickets?search=billing&status=Open&page=1
-  AX->>API: Authorization: Bearer <jwt>
-  API->>API: AuthGuard (decode → req.user)
-  API->>SVC: findAll(query)
-  SVC->>DB: prisma.ticket.count + prisma.ticket.findMany (skip/take)
-  DB-->>SVC: records + total count
-  SVC-->>API: { data, meta }
-  API-->>UI: 200 envelope
-  UI->>UI: React Query / state stores update
-
-  S->>UI: Click Export CSV (Admins only)
-  UI->>AX: GET /tickets/export
-  AX->>API: Authorization: Bearer <jwt>
-  API->>SVC: findAll (unpaginated)
-  SVC->>DB: prisma.ticket.findMany
-  DB-->>SVC: array
-  SVC-->>API: AsyncParser.parse(rows) → csv string
-  API-->>UI: text/csv response
-  UI->>UI: download as file
-```
-
-Every authenticated request shares the same guard validation: `AuthGuard` first, then route handlers. Role-based ownership checks live in the service layer for tickets (agents only see/touch their own; admins see all).
-
-## Admin workflow — Team page + per-user drill-in
-
-```mermaid
-sequenceDiagram
-  autonumber
-  actor A as Admin
-  participant UI as React
-  participant API as NestJS Controller
-  participant SVC as TeamService
-  participant DB as PostgreSQL
-
-  A->>UI: Navigate to /team
-  UI->>API: GET /team (bearer)
-  API->>API: AuthGuard → admin role check
-  API->>SVC: getOverview()
-  SVC->>DB: User.findMany
-  SVC->>DB: Ticket.findMany
-  DB-->>SVC: users + tickets
-  SVC->>SVC: Compute ticket counts per member
-  SVC-->>API: { summary, members }
-  API-->>UI: 200 envelope
-  UI->>UI: Render KPI tiles + members table
-
-  A->>UI: Click "View tickets" on a member row
-  UI->>UI: navigate(`/tickets?owner=${email}`)
-  UI->>API: GET /tickets?search=<email>&page=1
-  API->>SVC: findAll with filters
-  SVC->>DB: ticket.findMany with customer_email or related filters
-  DB-->>API: records
-  API-->>UI: filtered list
-```
-
-## Dashboard read-API workflow
-
-The dashboard KPIs, time-series charts, website traffic breakdown, and monthly volume are fully computed dynamically at runtime from database queries on `Ticket`, `User`, `Note`, and `Activity`.
-
-```mermaid
-sequenceDiagram
-  participant UI as Dashboard widgets
-  participant API as NestJS Controller
-  participant SVC as DashboardService
-  participant DB as PostgreSQL
-
-  UI->>API: GET /dashboard/overview?period=month (bearer)
-  API->>API: AuthGuard
-  API->>SVC: getOverview(userId, userRole, periodKey)
-  SVC->>DB: Ticket.findMany (current & previous ranges)
-  SVC->>DB: User.findMany
-  DB-->>SVC: records
-  SVC->>SVC: Bin tickets into time-series axis buckets<br/>Aggregate counts by channel, status, and agent
-  SVC-->>API: { period, kpis, userChart, trafficByWebsite, trafficByDevice, trafficByLocation, marketingMonthly }
-  API-->>UI: 200 response
+  Agent->>SPA: Submit new ticket form
+  SPA->>Client: POST /api/tickets { customer_name, customer_email, subject, description }
+  Client->>API: Request with Authorization: Bearer <jwt>
+  API->>API: AuthGuard decrypts JWT -> populates req.user
+  API->>SVC: createTicket(dto, req.user.id)
+  Note over SVC: Auto-increment sequence seq_id handles sequential ticket_id: "TIX-" + (1000 + seq_id)
+  SVC->>DB: Prisma transaction: insert Ticket & log Activity
+  DB-->>SVC: Ticket details (id_seq = 4)
+  SVC-->>API: Return ticket details with generated ticket_id ("TIX-1004")
+  API-->>Client: Returns 201 { data: Ticket }
+  Client-->>SPA: Refresh tickets list & trigger toast alert
 ```
 
 ---
 
-## Data model
+### 3.2. Admin Overview and Member Ticket Drill-Down
 
-The database schema is defined in [schema.prisma](Backend/prisma/schema.prisma) and maps the following core tables:
+Admins have visibility over all agents' performance metrics and can inspect any individual queue.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Admin as Administrator
+  participant SPA as React SPA
+  participant API as NestJS API Controller
+  participant SVC as TeamService
+  participant DB as PostgreSQL (Neon DB)
+
+  Admin->>SPA: Navigate to /team
+  SPA->>API: GET /api/team
+  API->>API: AuthGuard validates token & checks admin role
+  API->>SVC: getTeamOverview()
+  SVC->>DB: Query User list & group ticket totals by created_by_id and status
+  DB-->>SVC: Raw members and ticket count matrices
+  SVC->>SVC: Compute summaries & identify top performer
+  SVC-->>API: Return summary stats and member arrays
+  API-->>SPA: Returns 200 { data: { summary, members } }
+  SPA-->>Admin: Render KPI cards and members breakdown table
+
+  Admin->>SPA: Click "View Queue" on agent row (agent@tixora.local)
+  SPA->>SPA: Route transition to /tickets?owner=agent@tixora.local
+  SPA->>API: GET /api/tickets?owner=agent@tixora.local&page=1
+  API->>SVC: findAllTickets(queryFilters)
+  SVC->>DB: prisma.ticket.findMany filtered by createdBy.email
+  DB-->>SVC: Matched agent ticket list & total counts
+  SVC-->>API: Return paginated envelope
+  API-->>SPA: Returns 200 { data, meta }
+  SPA-->>Admin: Render the agent's scoped support queue
+```
+
+---
+
+### 3.3. Dashboard Widgets Read Pipeline
+
+The dashboard reads KPI summaries, time-series charts, and traffic aggregates in a single optimized endpoint.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Agent as Agent / Admin
+  participant SPA as Dashboard Widgets
+  participant API as NestJS Controller
+  participant SVC as DashboardService
+  participant DB as PostgreSQL (Neon DB)
+
+  Agent->>SPA: Load /dashboard
+  SPA->>API: GET /api/dashboard/overview (Bearer JWT)
+  API->>API: AuthGuard maps identity and scopes
+  API->>SVC: getOverview(userId, userRole)
+  Note over SVC: Parallel retrieval via Promise.all
+  SVC->>DB: Query DashboardKpis + ChartSeries + TrafficAggregates
+  DB-->>SVC: Raw analytical aggregates
+  SVC->>SVC: Format line-charts series & locations percentages
+  SVC-->>API: Return combined dashboard data structure
+  API-->>SPA: Returns 200 { data }
+  SPA-->>Agent: Render ECharts line diagrams, donut charts, and KPI widgets
+```
+
+---
+
+## 4. Entity-Relationship Database Layout
+
+Tixora's relational schema is modeled in PostgreSQL using Prisma ORM.
 
 ```mermaid
 erDiagram
-  USER ||--o{ TICKET : "createdBy"
-  USER ||--o{ ACTIVITY : "actor"
-  USER ||--o| CONTACT : "linkedUser (optional)"
-  TICKET ||--o{ NOTE : "notes"
+  USER ||--o{ TICKET : "creates (createdBy)"
+  USER ||--o{ ACTIVITY : "performs (actor)"
+  USER ||--o| CONTACT : "links to (linkedUser)"
+  TICKET ||--o{ NOTE : "contains (notes)"
 
   USER {
-    String id PK
-    String name
-    String email "unique"
-    String passwordHash
+    String id PK "UUID"
+    String name "Display Name"
+    String email UK "Unique Email Address"
+    String passwordHash "Bcrypt Encrypted Hash"
     String role "admin | sales"
-    DateTime createdAt
-    DateTime updatedAt
+    DateTime created_at
+    DateTime updated_at
   }
 
   TICKET {
-    String id PK
-    Int id_seq "unique autoincrement"
-    String ticket_id "unique sequential ID"
+    String id PK "UUID"
+    Int id_seq UK "Autoincrement Sequence ID"
+    String ticket_id UK "TIX-{1000 + id_seq} format"
     String customer_name
     String customer_email
     String subject
     String description
     String status "Open | In Progress | Closed"
-    String created_by_id FK "ref: User"
-    DateTime createdAt
-    DateTime updatedAt
+    String channel "Portal | Social Media | Email"
+    String created_by_id FK "References User.id"
+    DateTime created_at
+    DateTime updated_at
   }
 
   NOTE {
-    String id PK
-    String ticket_id FK "ref: Ticket"
+    String id PK "UUID"
+    String ticket_id FK "References Ticket.ticket_id"
     String note_text
     DateTime created_at
   }
 
   ACTIVITY {
-    String id PK
-    String actor_id FK "ref: User"
-    String action
+    String id PK "UUID"
+    String actor_id FK "References User.id"
+    String action "Activity Description"
     DateTime created_at
   }
 
   CONTACT {
-    String id PK
+    String id PK "UUID"
     String name
-    String email "optional"
-    String avatar "optional"
-    String linked_user_id FK "ref: User, optional"
+    String email "Optional"
+    String avatar "Optional Image URL"
+    String linked_user_id FK "References User.id (SetNull)"
   }
 
   NOTIFICATION {
-    String id PK
-    String kind
+    String id PK "UUID"
+    String kind "bug | user | lead-status | subscribe"
     String message
-    String audience
+    String audience "admin | sales | all"
     DateTime created_at
   }
 ```
 
+### Database Design Points:
+
+- **Autoincrement Sequential ID**: `Ticket.id_seq` utilizes PostgreSQL sequence generators to safely yield continuous sequential numeric values.
+- **Cascading Deletions**: Deleting a `User` cascades to delete associated `Ticket` and `Activity` records. Deleting a `Ticket` cascades to wipe its associated internal `Note` records.
+- **Nullable User Links**: Deleting a `User` does not delete a `Contact` card; the connection is safely set to null (`onDelete: SetNull`).
+
 ---
 
-## Known limitations & considerations
+## 5. Architectural Considerations and Trade-offs
 
-- **Type drift** between Backend and Frontend interfaces. Mitigated by CI lint+typecheck on both sides. pnpm workspaces are in place (see [ADR 0006](docs/ADRs/0006-pnpm-workspaces.md)).
-- **Token in localStorage** is XSS-exposed. CSP and httpOnly-cookie migration are in the roadmap.
-- **No refresh tokens**. The access token simply expires after `JWT_EXPIRES_IN`; the user re-logs in.
-- **CSV export is array-based** (`Ticket.findMany()`). Bounded by available heap.
-- **In-memory rate limiter**. Multi-dyno deployments need a shared store (`rate-limit-redis`).
-- **No observability** (Sentry/OTel). Logs are stdout only.
+### 5.1. Monorepo Organization
+
+We maintain a monorepo structure managed through `pnpm` workspaces (detailed in [ADR 0006](docs/ADRs/0006-pnpm-workspaces.md)). This architecture allows shared type structures, simplified repository management, and synchronized build steps under one central `pnpm-lock.yaml`.
+
+### 5.2. Client-Side JWT Storage
+
+Authentications are logged using Bearer JWT tokens stored in `localStorage` on the client (detailed in [ADR 0005](docs/ADRs/0005-token-in-localstorage.md)). While highly compatible with static hosting architectures (like Vercel), it introduces XSS vulnerability risks. Moving to an `httpOnly` secure cookie structure remains a primary roadmap objective.
+
+### 5.3. Relational Autoincrement sequence formats
+
+Generating ticket numbers using a custom Postgres sequence (`TIX-${1000 + id_seq}`) guarantees that ticket IDs are short, guessable, and user-friendly. A transactional schema ensures no ID sequence skips occur during high-concurrency ticket submissions.
+
+### 5.4. In-Memory Rate Limiting
+
+NestJS routes rate-limit limits are calculated in-memory on the application runtime instance. While simple and sufficient for standalone container deploys, it requires migrating to Redis-backed limiters when deploying multiple horizontal backend instances.

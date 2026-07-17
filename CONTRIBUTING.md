@@ -1,90 +1,114 @@
+<!-- markdownlint-disable MD013 MD033 -->
+
 # Contributing to Tixora
 
-Thanks for taking the time to contribute. This guide is short on purpose — read it once, refer back as needed.
+Thank you for contributing to Tixora. This document outlines onboarding procedures, coding standards, branch conventions, and quality gates to maintain a clean, stable codebase.
 
-## Development setup
+---
 
-Prerequisites:
+## 1. Local Workspace Development
 
-- Node.js 22 (use `nvm use` if you have nvm; the version is pinned in `.nvmrc`).
-- pnpm 9 or later (`npm install -g pnpm`).
-- Docker Desktop (optional, for the compose stack).
+### System Requirements
 
-From the repo root:
+- **Node.js**: Version `22.x` (enforced by [`.nvmrc`](file:///c:/SharedData/Downloads/Tixora/.nvmrc))
+- **pnpm**: Version `10.30.0` or higher (workspace packages manager)
+- **PostgreSQL / Neon DB**: Accessible relational database instance
 
-```bash
-pnpm install                  # one install — pnpm workspaces handle Frontend + Backend together
+### Onboarding Steps
+
+1. Install workspace dependencies at the root:
+   ```bash
+   pnpm install
+   ```
+2. Configure environments for the Backend and Frontend modules by following the instructions in the [Setup Guide](docs/SETUP.md).
+3. Validate backend type-safety and generate database schema files:
+   ```bash
+   pnpm --filter ./Backend prisma:generate
+   ```
+
+---
+
+## 2. Git Workflow & Conventions
+
+### Branch Naming Patterns
+
+All feature branches should be created off `main` and named using the following prefixes:
+
+- `feat/` for new features (e.g. `feat/ticket-assignee`)
+- `fix/` for bug fixes (e.g. `fix/cors-origin-allowlist`)
+- `chore/` for tooling, configuration, and dependencies updates (e.g. `chore/eslint-v9`)
+- `docs/` for documentation edits (e.g. `docs/api-examples`)
+- `perf/` for performance tuning (e.g. `perf/db-indexing`)
+
+---
+
+### Commit Message Standards
+
+Tixora enforces **Conventional Commits**. Commit messages are checked by `commitlint` on the `commit-msg` hook (limited to a maximum header length of 100 characters).
+
+#### Message Format:
+
+```text
+type(scope): concise imperative description
+
+Optional multi-line commit explanation body detailing why this change was implemented.
 ```
 
-The single root `pnpm-lock.yaml` governs both apps. Per-app installs (`cd Backend && pnpm install`) still work but resolve to the same root lockfile.
+#### Allowed Types:
 
-See `README.md` for the full quick-start including database setup.
+- `feat`: A new user-facing feature.
+- `fix`: A bug fix.
+- `chore`: Maintenance modifications (dependencies, config changes).
+- `docs`: Documentation-only updates.
+- `refactor`: Code restructuring without changing runtime behaviors.
+- `perf`: Performance optimizations.
+- `test`: Adding or correcting tests.
+- `build`/`ci`: Build scripts or pipeline updates.
 
-## Branch naming
+#### Examples:
 
-- `feat/<short-description>` for new features
-- `fix/<short-description>` for bug fixes
-- `chore/<short-description>` for tooling, refactors, dependency bumps
-- `docs/<short-description>` for documentation-only changes
-
-## Commit messages
-
-This project uses [Conventional Commits](https://www.conventionalcommits.org/). The `commit-msg`
-hook will reject commits that don't conform.
-
-Format: `<type>(<optional-scope>): <subject>`
-
-Examples:
-
-```
-feat(api): add owner-or-admin guard to lead deletion
-fix(web): debounce search input by 400ms before firing query
-docs: document RBAC trade-off in ADR 0003
-chore: bump express from 5.0.0 to 5.0.1
+```text
+feat(tickets): add assignee dropdown filter for admins
+fix(auth): prevent timing attacks on password verification checks
+docs: update troubleshooting sections in setup guide
 ```
 
-Allowed `<type>` values: `feat`, `fix`, `chore`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `revert`.
+---
 
-## Pull request checklist
+## 3. Code Style & Quality Guidelines
 
-Before opening a PR:
+### Formatting and Linting
 
-- [ ] Code passes `pnpm --filter ./<workspace> lint` and `pnpm --filter ./<workspace> typecheck` in each affected workspace.
-- [ ] Build succeeds (`pnpm --filter ./<workspace> build`).
-- [ ] Loading, empty, and error states exist for every async surface touched.
-- [ ] No `: any` without an inline justification comment.
-- [ ] No hardcoded URLs or secrets — everything reads from env.
-- [ ] Touched docs (`README.md`, `docs/API.md`, ADRs) reflect the change.
-- [ ] Commits follow Conventional Commits.
+- **Formatting**: Formats are validated using Prettier. The `pre-commit` hook automatically formats modified files.
+- **Linting Rules**: ESLint rules are active in both workspace directories.
+- Run format checks locally:
+  ```bash
+  pnpm format:check # Run check across MD, JSON, YAML files
+  ```
 
-## Code style
+### Code Style Design Guidelines
 
-- Prettier-formatted (runs on `pre-commit`).
-- ESLint flat config per workspace; no warnings allowed.
-- One responsibility per file. If a file crosses ~300 lines, consider splitting.
-- Comments only when the _why_ is non-obvious. Don't describe _what_ the code does.
-- Imports use aliased paths configured in `tsconfig.json`. Avoid `../../../..` chains.
+1. **TypeScript Strictness**: Always write strict TypeScript. Avoid using type assertions (`as AnyType`) or `any` declarations.
+2. **File Size Boundaries**: Keep modules small. If a source file grows beyond **~300 lines**, split it into separate modules.
+3. **Comment Rationale**: Write comments detailing _why_ code was written in a specific way, rather than explaining _what_ a line of code does.
+4. **Clean Imports**: Use relative import paths. Avoid long, nested relative paths (`../../../../`); split modules if path trees grow too deep.
 
-## Where things live
+---
 
-| Area                   | Path                        |
-| ---------------------- | --------------------------- |
-| API source             | `Backend/src/`              |
-| API schemas (Zod)      | `Backend/src/schemas/`      |
-| API routes             | `Backend/src/routes/`       |
-| Web source             | `Frontend/src/`             |
-| Shared mirrored types  | `Frontend/src/types/api.ts` |
-| Architecture decisions | `docs/ADRs/`                |
+## 4. Pull Request Requirements
 
-## Good first issues
+Before submitting your Pull Request, ensure the following checklist is completed:
 
-Look for the `good first issue` label on GitHub. Common starting points:
+- [ ] **Clean Lint Checks**: Both packages pass `pnpm lint` checks with zero warnings.
+- [ ] **TypeScript Type Safety**: All TypeScript builds pass (`pnpm typecheck`) without exceptions.
+- [ ] **Local Build Verification**: The application builds locally (`pnpm build` completes successfully).
+- [ ] **No Secrets in Source**: No hardcoded passwords, tokens, or credentials exist in the source files.
+- [ ] **Environment Variable Alignment**: Any newly added variable is documented in the matching `.env.example` files.
+- [ ] **Documentation Updates**: Associated documentation files (`README.md`, `ARCHITECTURE.md`, `docs/API.md`) are updated to reflect the new code changes.
+- [ ] **Conventional Commit Formats**: All commits follow the specified Conventional Commit rules.
 
-- Add a missing loading/empty/error state.
-- Tighten a Zod schema to reject edge inputs.
-- Add an ADR for a decision discovered while implementing a feature.
+---
 
-## Security issues
+## 5. Security Reports
 
-See [`SECURITY.md`](SECURITY.md) for private disclosure instructions. **Do not** open public
-issues for security problems.
+Do not open public GitHub issues for security vulnerabilities. Review [`SECURITY.md`](SECURITY.md) for steps on disclosing security risks privately.

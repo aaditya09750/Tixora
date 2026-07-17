@@ -1,347 +1,508 @@
-# API reference
+<!-- markdownlint-disable MD013 MD033 -->
 
-Base URL — `http://localhost:4000/api` (local), `<render-url>/api` (production), or `<host>/api` when behind the nginx proxy.
+# Tixora API Specification
 
-All requests and responses are JSON. Authenticated endpoints require an `Authorization: Bearer <jwt>` header.
+This document details the REST API specifications, query filters, authorization rules, request/response bodies, and integration examples for the Tixora CRM system.
 
-## Conventions
+## Global Configurations & Conventions
 
-- **Success envelope**: `{ "data": ..., "meta": ... }`. `meta` only on paginated endpoints.
-- **Error envelope**: `{ "error": { "code": "<CODE>", "message": "<human-readable>", "details": <optional> } }`.
-- **Error codes**: `BAD_REQUEST` (400), `UNAUTHORIZED` (401), `FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409), `VALIDATION_ERROR` (422), `RATE_LIMITED` (429), `INTERNAL` (500).
-- **Pagination meta**: `{ "total": N, "page": P, "limit": 10, "totalPages": T }`. `limit` is fixed at 10.
+### Base Endpoint Paths
 
-Source of truth for every request shape: Zod schemas in [`Backend/src/schemas/`](../Backend/src/schemas/).
+- **Development (Local Host)**: `http://localhost:4000/api`
+- **Nginx Development Proxy**: `http://localhost:8080/api`
+- **Production Deployment**: `https://tixora-api-z8kk.onrender.com/api`
 
-## Endpoint index
+### Content Type Headers
 
-| Method | Path                  | Auth           | Section                                |
-| ------ | --------------------- | -------------- | -------------------------------------- |
-| `GET`  | `/health`             | Public         | [Health](#get-apihealth)               |
-| `POST` | `/auth/register`      | Public         | [Auth](#post-apiauthregister)          |
-| `POST` | `/auth/login`         | Public         | [Auth](#post-apiauthlogin)             |
-| `GET`  | `/auth/me`            | Bearer         | [Auth](#get-apiauthme)                 |
-| `GET`  | `/tickets`            | Bearer         | [Tickets](#get-apitickets)             |
-| `POST` | `/tickets`            | Bearer         | [Tickets](#post-apitickets)            |
-| `GET`  | `/tickets/:ticket_id` | Bearer         | [Tickets](#get-apitickesticket_id)     |
-| `PUT`  | `/tickets/:ticket_id` | Bearer         | [Tickets](#put-apitickesticket_id)     |
-| `GET`  | `/team`               | Bearer + admin | [Team](#get-apiteam)                   |
-| `GET`  | `/dashboard/overview` | Bearer         | [Dashboard](#get-apidashboardoverview) |
-| `GET`  | `/activities`         | Bearer         | [Activities](#get-apiactivities)       |
-| `GET`  | `/contacts`           | Bearer         | [Contacts](#get-apicontacts)           |
-| `GET`  | `/notifications`      | Bearer         | [Notifications](#get-apinotifications) |
+All request bodies and responses are encoded in **JSON** (`application/json`).
 
----
+### Authorization Header
 
-## `GET /api/health`
+Protected paths require standard Bearer token values matching the format:
 
-DB-aware liveness probe. Public.
-
-```bash
-curl http://localhost:4000/api/health
+```http
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsIn...
 ```
 
-**Response 200** (Database connected):
+### Global Client Scope Override
 
-```json
-{ "status": "ok", "service": "tixora-api", "uptime": 12.34, "db": "connected" }
+The API accommodates both standard CLI integration clients and the official Web dashboard SPA. The web UI passes a custom tracking header:
+
+```http
+x-tixora-client: web
 ```
 
-**Response 503** (Database disconnected):
+When this header is active, returned models are enclosed in standard JSON envelope containers `{ data: ... }`. Paginated listing endpoints append a metadata block `{ data: [...], meta: { total, page, limit, totalPages } }`.
 
-```json
-{ "status": "degraded", "service": "tixora-api", "uptime": 0.7, "db": "disconnected" }
-```
+### Standard API Error Envelopes
 
-Render uses this as the readiness check (see `healthCheckPath: /api/health` in `render.yaml`).
-
----
-
-## `POST /api/auth/register`
-
-Create a new user. Public. Rate-limited (20 req / 15 min / IP).
-
-Schema: [`registerSchema`](../Backend/src/schemas/auth.ts).
-
-**Request**
+If a request fails, the application returns a matching HTTP failure code along with a descriptive JSON object:
 
 ```json
 {
-  "name": "Aaditya Gunjal",
-  "email": "you@example.com",
-  "password": "at-least-8-chars",
-  "role": "sales"
-}
-```
-
-`role` is optional and defaults to `sales`. Allowed: `"admin" | "sales"`.
-
-**Response 201**
-
-```json
-{
-  "data": {
-    "user": {
-      "id": "65...",
-      "name": "Aaditya Gunjal",
-      "email": "you@example.com",
-      "role": "sales",
-      "createdAt": "...",
-      "updatedAt": "..."
-    },
-    "token": "eyJhbGciOi..."
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Input validation failed",
+    "details": ["customer_email must be a valid email"]
   }
 }
 ```
 
-**Errors**
+#### Supported Error Reference Codes:
 
-- `422 VALIDATION_ERROR` — bad input shape.
-- `409 CONFLICT` — email already registered.
-- `429 RATE_LIMITED` — too many attempts.
+- `BAD_REQUEST` (400): General syntax structure formatting issues.
+- `UNAUTHORIZED` (401): Missing, expired, or invalid authorization headers.
+- `FORBIDDEN` (403): User role has insufficient permissions.
+- `NOT_FOUND` (404): Resource not found.
+- `CONFLICT` (409): Resource constraint violation (e.g. duplicate email registration).
+- `VALIDATION_ERROR` (422): Input parameters or JSON body fields failed check requirements.
+- `RATE_LIMITED` (429): Rate limits exceeded.
+- `INTERNAL` (500): Server runtime errors.
+
+---
+
+## Endpoint Summary Index
+
+| HTTP Verb  | Path                                                  | Authorization  | Purpose                                                         |
+| ---------- | ----------------------------------------------------- | -------------- | --------------------------------------------------------------- |
+| **`GET`**  | [`/health`](#1-get-apihealth)                         | Public         | Server liveness and database readiness probe                    |
+| **`POST`** | [`/auth/register`](#2-post-apiauthregister)           | Public         | Registers a new agent user profile (default `role=sales`)       |
+| **`POST`** | [`/auth/login`](#3-post-apiauthlogin)                 | Public         | Authenticates credentials and issues a JWT token                |
+| **`GET`**  | [`/auth/me`](#4-get-apiauthme)                        | Bearer         | Returns active agent user details                               |
+| **`GET`**  | [`/tickets`](#5-get-apitickets)                       | Bearer         | Lists and searches ticket records (optional pagination)         |
+| **`POST`** | [`/tickets`](#6-post-apitickets)                      | Bearer         | Creates a new support ticket in the database                    |
+| **`GET`**  | [`/tickets/:ticket_id`](#7-get-apiticketsticket_id)   | Bearer         | Retrieves a detailed ticket record and internal comment history |
+| **`PUT`**  | [`/tickets/:ticket_id`](#8-put-apiticketsticket_id)   | Bearer         | Updates a ticket status or appends an internal note             |
+| **`GET`**  | [`/team`](#9-get-apiteam)                             | Bearer + Admin | Fetches summary statistics across the sales agents team         |
+| **`GET`**  | [`/dashboard/overview`](#10-get-apidashboardoverview) | Bearer         | Retrieves dashboard KPI metrics and chart arrays                |
+| **`GET`**  | [`/activities`](#11-get-apiactivities)                | Bearer         | Retrieves the 20 most recent system events                      |
+| **`GET`**  | [`/contacts`](#12-get-apicontacts)                    | Bearer         | Fetches alphabetical list of support contacts                   |
+| **`GET`**  | [`/notifications`](#13-get-apinotifications)          | Bearer         | Resolves notifications matching current user's role             |
+
+---
+
+## Endpoint Details
+
+### 1. `GET /api/health`
+
+Database-aware server readiness check. Used by hosting orchestrators (like Render) to verify container status.
+
+#### Sample Request
+
+```bash
+curl -X GET http://localhost:4000/api/health
+```
+
+#### Response (200 OK - DB Connected)
+
+```json
+{
+  "status": "ok",
+  "service": "tixora-api",
+  "uptime": 124.52,
+  "db": "connected"
+}
+```
+
+#### Response (503 Service Unavailable - DB Disconnected)
+
+```json
+{
+  "status": "degraded",
+  "service": "tixora-api",
+  "uptime": 3.12,
+  "db": "disconnected"
+}
+```
+
+---
+
+### 2. `POST /api/auth/register`
+
+Creates a new user profile. Rate-limited to a maximum of 20 requests per 15 minutes per IP.
+
+#### Request Payload
+
+```json
+{
+  "name": "Jane Doe",
+  "email": "jane.doe@tixora.local",
+  "password": "strongPassword123!",
+  "role": "sales"
+}
+```
+
+- `role` must be either `"admin"` or `"sales"` (defaults to `"sales"` if omitted).
+
+#### Sample Request
 
 ```bash
 curl -X POST http://localhost:4000/api/auth/register \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Aaditya","email":"a@example.com","password":"hunter2hunter2"}'
+  -H "Content-Type: application/json" \
+  -d '{"name":"Jane Doe","email":"jane.doe@tixora.local","password":"strongPassword123!","role":"sales"}'
 ```
 
----
-
-## `POST /api/auth/login`
-
-Exchange credentials for a JWT. Public. Rate-limited (20 req / 15 min / IP).
-
-Schema: [`loginSchema`](../Backend/src/schemas/auth.ts).
-
-**Request**
-
-```json
-{ "email": "you@example.com", "password": "your-password" }
-```
-
-**Response 200** — same shape as register.
-
-**Errors**
-
-- `401 UNAUTHORIZED` — `{ "error": { "code": "UNAUTHORIZED", "message": "Invalid credentials" } }` (intentionally vague — does not distinguish unknown email vs wrong password).
-- `422 VALIDATION_ERROR`.
-
-```bash
-curl -X POST http://localhost:4000/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"sales@tixora.local","password":"sales123!"}'
-```
-
----
-
-## `GET /api/auth/me`
-
-Current user. Bearer required.
-
-```bash
-curl http://localhost:4000/api/auth/me -H "Authorization: Bearer $JWT"
-```
+#### Response (201 Created)
 
 ```json
 {
   "data": {
     "user": {
-      "id": "...",
-      "name": "...",
-      "email": "...",
+      "id": "c62fb529-659f-4318-80f0-8c29b1395fd1",
+      "name": "Jane Doe",
+      "email": "jane.doe@tixora.local",
       "role": "sales",
-      "createdAt": "...",
-      "updatedAt": "..."
+      "created_at": "2026-07-17T20:00:00.000Z",
+      "updated_at": "2026-07-17T20:00:00.000Z"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+#### Common Error Responses
+
+- `409 CONFLICT` if email is already registered:
+  ```json
+  {
+    "error": {
+      "code": "CONFLICT",
+      "message": "Email is already registered"
+    }
+  }
+  ```
+- `422 UNPROCESSABLE ENTITY` if validation checks fail:
+  ```json
+  {
+    "error": {
+      "code": "VALIDATION_ERROR",
+      "message": "Input validation failed",
+      "details": ["password must be longer than or equal to 8 characters"]
+    }
+  }
+  ```
+
+---
+
+### 3. `POST /api/auth/login`
+
+Authenticates credentials and returns a Bearer JWT. Rate-limited to 20 requests per 15 minutes per IP.
+
+#### Request Payload
+
+```json
+{
+  "email": "sales@tixora.local",
+  "password": "sales123!"
+}
+```
+
+#### Sample Request
+
+```bash
+curl -X POST http://localhost:4000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"sales@tixora.local","password":"sales123!"}'
+```
+
+#### Response (200 OK)
+
+```json
+{
+  "data": {
+    "user": {
+      "id": "e89fb739-163f-4228-89f0-2c29b1595fc2",
+      "name": "Sales User",
+      "email": "sales@tixora.local",
+      "role": "sales",
+      "created_at": "2026-07-17T18:00:00.000Z",
+      "updated_at": "2026-07-17T18:00:00.000Z"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+#### Common Error Responses
+
+- `401 UNAUTHORIZED` for incorrect credentials:
+  ```json
+  {
+    "error": {
+      "code": "UNAUTHORIZED",
+      "message": "Invalid email or password"
+    }
+  }
+  ```
+
+---
+
+### 4. `GET /api/auth/me`
+
+Resolves the user details of the active JWT token owner.
+
+#### Sample Request
+
+```bash
+curl -X GET http://localhost:4000/api/auth/me \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+#### Response (200 OK)
+
+```json
+{
+  "data": {
+    "user": {
+      "id": "e89fb739-163f-4228-89f0-2c29b1595fc2",
+      "name": "Sales User",
+      "email": "sales@tixora.local",
+      "role": "sales",
+      "created_at": "2026-07-17T18:00:00.000Z",
+      "updated_at": "2026-07-17T18:00:00.000Z"
     }
   }
 }
 ```
 
-**Errors**: `401 UNAUTHORIZED`.
-
 ---
 
-## `GET /api/tickets`
+### 5. `GET /api/tickets`
 
-List and search tickets. Bearer required.
+Lists and filters support tickets.
 
-**Query parameters** (all optional):
+- **Scope Enforcements**: Agents see only their assigned tickets. Admins see all tickets.
 
-- `status` — Filter by status (`Open | In Progress | Closed`).
-- `search` — Case-insensitive partial search on name, email, subject, description, or ticket ID.
-- `page` — Page number (for paginated frontend requests).
+#### Query Filter Parameters (Optional)
 
-**Response (Standard Client):**
-A raw JSON array:
+- `status`: Filter by status (`Open`, `In Progress`, `Closed`).
+- `search`: Case-insensitive text search (checks ID, name, email, subject, and description).
+- `page`: Integer page index (defaults to `1`).
+- `export`: Set to `"true"` to request all records unpaginated for report downloads.
+
+#### Sample Request (Standard Client - Unpaginated)
+
+```bash
+curl -X GET "http://localhost:4000/api/tickets?status=Open&search=billing" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+#### Response (200 OK - Standard Client)
 
 ```json
 [
   {
-    "ticket_id": "TIX-1003",
-    "customer_name": "Aniket Singh",
-    "subject": "Request for custom features export",
-    "status": "In Progress",
-    "created_at": "2026-07-12T19:19:40.000Z"
+    "ticket_id": "TIX-1002",
+    "customer_name": "Alice Johnson",
+    "subject": "Billing issue with invoice #99",
+    "status": "Open",
+    "created_at": "2026-07-17T19:30:00.000Z"
   }
 ]
 ```
 
-**Response (Web Client - with `x-tixora-client: web` header):**
-A paginated JSON envelope:
+#### Sample Request (Web Dashboard Client)
+
+```bash
+curl -X GET "http://localhost:4000/api/tickets?status=Open&search=billing&page=1" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "x-tixora-client: web"
+```
+
+#### Response (200 OK - Web Client)
 
 ```json
 {
   "data": [
     {
-      "id": "...",
-      "ticket_id": "TIX-1003",
-      "customer_name": "Aniket Singh",
-      "customer_email": "aniket@example.com",
-      "subject": "Request for custom features export",
-      "description": "...",
-      "status": "In Progress",
-      "created_by_id": "...",
-      "created_at": "2026-07-12T19:19:40.000Z",
-      "updated_at": "2026-07-12T19:19:40.000Z"
+      "id": "848fb629-883f-488b-89ff-2c29b1595fe4",
+      "ticket_id": "TIX-1002",
+      "customer_name": "Alice Johnson",
+      "customer_email": "alice@example.com",
+      "subject": "Billing issue with invoice #99",
+      "description": "I was charged twice on my credit card.",
+      "status": "Open",
+      "channel": "Portal",
+      "created_by_id": "e89fb739-163f-4228-89f0-2c29b1595fc2",
+      "created_at": "2026-07-17T19:30:00.000Z",
+      "updated_at": "2026-07-17T19:30:00.000Z"
     }
   ],
   "meta": {
-    "total": 25,
+    "total": 1,
     "page": 1,
     "limit": 10,
-    "totalPages": 3
+    "totalPages": 1
   }
 }
 ```
 
 ---
 
-## `POST /api/tickets`
+### 6. `POST /api/tickets`
 
-Create a support ticket. Bearer required.
+Submits a new support ticket.
 
-**Request:**
+#### Request Payload
 
 ```json
 {
   "customer_name": "John Doe",
-  "customer_email": "john@example.com",
-  "subject": "API Key Issue",
-  "description": "Cannot generate new API keys from dashboard"
+  "customer_email": "john.doe@example.com",
+  "subject": "API connectivity timeouts",
+  "description": "Experiencing connection timeouts when calling the analytics endpoint."
 }
 ```
 
-**Response (Standard Client):**
+#### Sample Request
+
+```bash
+curl -X POST http://localhost:4000/api/tickets \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"customer_name":"John Doe","customer_email":"john.doe@example.com","subject":"API connectivity timeouts","description":"Experiencing connection timeouts when calling the analytics endpoint."}'
+```
+
+#### Response (201 Created - Standard Client)
 
 ```json
 {
-  "ticket_id": "TIX-1026",
-  "created_at": "2026-07-16T20:25:54.901Z"
+  "ticket_id": "TIX-1003",
+  "created_at": "2026-07-17T20:25:00.000Z"
 }
 ```
 
-**Response (Web Client - with `x-tixora-client: web` header):**
+#### Response (201 Created - Web Client)
 
 ```json
 {
   "data": {
-    "id": "...",
-    "ticket_id": "TIX-1026",
+    "id": "939fb629-993f-488b-99ff-3c29b1595ff9",
+    "ticket_id": "TIX-1003",
     "customer_name": "John Doe",
-    "customer_email": "john@example.com",
-    "subject": "API Key Issue",
-    "description": "Cannot generate new API keys from dashboard",
+    "customer_email": "john.doe@example.com",
+    "subject": "API connectivity timeouts",
+    "description": "Experiencing connection timeouts when calling the analytics endpoint.",
     "status": "Open",
-    "created_by_id": "...",
-    "created_at": "2026-07-16T20:25:54.901Z",
-    "updated_at": "2026-07-16T20:25:54.901Z"
+    "channel": "Portal",
+    "created_by_id": "e89fb739-163f-4228-89f0-2c29b1595fc2",
+    "created_at": "2026-07-17T20:25:00.000Z",
+    "updated_at": "2026-07-17T20:25:00.000Z"
   }
 }
 ```
 
 ---
 
-## `GET /api/tickets/:ticket_id`
+### 7. `GET /api/tickets/:ticket_id`
 
-Retrieve details and comment history for a ticket. Bearer required.
+Retrieves a detailed ticket record including its internal notes.
 
-**Response (Standard Client):**
+#### Sample Request
+
+```bash
+curl -X GET http://localhost:4000/api/tickets/TIX-1002 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+#### Response (200 OK - Standard Client)
 
 ```json
 {
-  "ticket_id": "TIX-1026",
-  "customer_name": "John Doe",
-  "customer_email": "john@example.com",
-  "subject": "API Key Issue",
-  "description": "Cannot generate new API keys from dashboard",
+  "ticket_id": "TIX-1002",
+  "customer_name": "Alice Johnson",
+  "customer_email": "alice@example.com",
+  "subject": "Billing issue with invoice #99",
+  "description": "I was charged twice on my credit card.",
   "status": "Open",
   "notes": [
     {
-      "id": "...",
-      "ticket_id": "TIX-1026",
-      "note_text": "Investigating logs...",
-      "created_at": "2026-07-16T20:30:00.000Z"
+      "id": "e22fb529-659f-4318-80f0-8c29b1395fe3",
+      "ticket_id": "TIX-1002",
+      "note_text": "Investigated duplicate charge. Prepared refund transaction.",
+      "created_at": "2026-07-17T19:45:00.000Z"
     }
   ]
 }
 ```
 
-**Response (Web Client - with `x-tixora-client: web` header):**
+#### Response (200 OK - Web Client)
 
 ```json
 {
   "data": {
-    "id": "...",
-    "ticket_id": "TIX-1026",
-    "customer_name": "John Doe",
-    "customer_email": "john@example.com",
-    "subject": "API Key Issue",
-    "description": "Cannot generate new API keys from dashboard",
+    "id": "848fb629-883f-488b-89ff-2c29b1595fe4",
+    "ticket_id": "TIX-1002",
+    "customer_name": "Alice Johnson",
+    "customer_email": "alice@example.com",
+    "subject": "Billing issue with invoice #99",
+    "description": "I was charged twice on my credit card.",
     "status": "Open",
-    "created_by_id": "...",
-    "created_at": "2026-07-16T20:25:54.901Z",
-    "updated_at": "2026-07-16T20:25:54.901Z",
-    "notes": [...]
+    "channel": "Portal",
+    "created_by_id": "e89fb739-163f-4228-89f0-2c29b1595fc2",
+    "created_at": "2026-07-17T19:30:00.000Z",
+    "updated_at": "2026-07-17T19:45:00.000Z",
+    "notes": [
+      {
+        "id": "e22fb529-659f-4318-80f0-8c29b1395fe3",
+        "ticket_id": "TIX-1002",
+        "note_text": "Investigated duplicate charge. Prepared refund transaction.",
+        "created_at": "2026-07-17T19:45:00.000Z"
+      }
+    ]
   }
 }
 ```
 
 ---
 
-## `PUT /api/tickets/:ticket_id`
+### 8. `PUT /api/tickets/:ticket_id`
 
-Update ticket status and/or append internal notes. Bearer required.
+Updates ticket status or appends an internal note.
 
-**Request:**
+#### Request Payload
 
 ```json
 {
   "status": "In Progress",
-  "notes": "Reviewed user logs, restarting session."
+  "notes": "Refund transaction initiated. Contacting payment gateway."
 }
 ```
 
-**Response:**
+- Both fields are optional, but at least one must be provided.
+
+#### Sample Request
+
+```bash
+curl -X PUT http://localhost:4000/api/tickets/TIX-1002 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"In Progress","notes":"Refund transaction initiated. Contacting payment gateway."}'
+```
+
+#### Response (200 OK)
 
 ```json
 {
   "success": true,
-  "updated_at": "2026-07-16T20:32:00.000Z"
+  "updated_at": "2026-07-17T20:10:00.000Z"
 }
 ```
 
 ---
 
-## `GET /api/team`
+### 9. `GET /api/team`
 
-Admin-only. Returns the sales team with per-user lead aggregates plus a summary block.
+Admin-only endpoint. Returns sales agents listing with ticket counts and queue performance indicators.
+
+#### Sample Request
 
 ```bash
-curl http://localhost:4000/api/team -H "Authorization: Bearer $ADMIN_JWT"
+curl -X GET http://localhost:4000/api/team \
+  -H "Authorization: Bearer ADMIN_JWT_TOKEN"
 ```
 
-**Response 200**
+#### Response (200 OK)
 
 ```json
 {
@@ -350,24 +511,28 @@ curl http://localhost:4000/api/team -H "Authorization: Bearer $ADMIN_JWT"
       "totalMembers": 3,
       "adminCount": 1,
       "salesCount": 2,
-      "totalLeads": 25,
+      "totalTickets": 25,
       "topPerformer": {
-        "id": "65...",
+        "id": "e89fb739-163f-4228-89f0-2c29b1595fc2",
         "name": "Sales User",
         "email": "sales@tixora.local",
-        "totalLeads": 12
+        "totalTickets": 14
       }
     },
     "members": [
       {
-        "id": "65...",
+        "id": "e89fb739-163f-4228-89f0-2c29b1595fc2",
         "name": "Sales User",
         "email": "sales@tixora.local",
         "role": "sales",
-        "avatar": "https://i.pravatar.cc/150?u=sales%40tixora.local",
-        "leadCounts": {
-          "total": 12,
-          "byStatus": { "New": 3, "Contacted": 4, "Qualified": 3, "Lost": 2 }
+        "avatar": "https://i.pravatar.cc/150?u=sales@tixora.local",
+        "ticketCounts": {
+          "total": 14,
+          "byStatus": {
+            "Open": 4,
+            "In Progress": 6,
+            "Closed": 4
+          }
         }
       }
     ]
@@ -375,21 +540,20 @@ curl http://localhost:4000/api/team -H "Authorization: Bearer $ADMIN_JWT"
 }
 ```
 
-**Errors**: `401 UNAUTHORIZED`, `403 FORBIDDEN` (sales role).
-
-Implementation: `User.find()` joined with `Lead.aggregate($group)` by `createdBy` and `$cond` per status. Sorted by `total` descending; `topPerformer` is null when no leads exist.
-
 ---
 
-## `GET /api/dashboard/overview`
+### 10. `GET /api/dashboard/overview`
 
-Single round-trip read returning every dashboard widget's data. Bearer required.
+Resolves analytic widgets records, location percentages, traffic sources, and monthly volumes.
+
+#### Sample Request
 
 ```bash
-curl http://localhost:4000/api/dashboard/overview -H "Authorization: Bearer $JWT"
+curl -X GET http://localhost:4000/api/dashboard/overview \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
-**Response 200** (abridged)
+#### Response (200 OK - Abridged)
 
 ```json
 {
@@ -430,115 +594,108 @@ curl http://localhost:4000/api/dashboard/overview -H "Authorization: Bearer $JWT
       ]
     },
     "trafficByWebsite": [{ "name": "Google", "value": 80, "active": false }],
-    "trafficByDevice": [{ "label": "Linux", "value": 40, "color": "indigo" }],
+    "trafficByDevice": [{ "label": "Mobile", "value": 65, "color": "indigo" }],
     "trafficByLocation": [{ "country": "United States", "percentage": 38.6, "color": "purple" }],
-    "marketingMonthly": [{ "month": "Jan", "value": 40, "color": "indigo" }]
+    "marketingMonthly": [{ "month": "Jan", "value": 45, "color": "indigo" }]
   }
 }
 ```
 
-Data is read from the `dashboardkpis`, `chartseries`, and `trafficaggregates` collections (all populated by `pnpm seed`). The endpoint fans three reads in parallel via `Promise.all`.
-
-**Errors**: `401 UNAUTHORIZED`.
-
 ---
 
-## `GET /api/activities`
+### 11. `GET /api/activities`
 
-Recent activity feed. Bearer required. Returns the 20 most recent activities populating actor name/email/role.
+Resolves the 20 most recent system activity event feeds.
+
+#### Sample Request
 
 ```bash
-curl http://localhost:4000/api/activities -H "Authorization: Bearer $JWT"
+curl -X GET http://localhost:4000/api/activities \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
-**Response 200**
+#### Response (200 OK)
 
 ```json
 {
   "data": [
     {
-      "id": "65...",
-      "actorName": "Admin User",
-      "actorEmail": "admin@tixora.local",
-      "actorRole": "admin",
-      "action": "Released filter improvements to all users.",
-      "createdAt": "2026-05-19T14:30:00.000Z"
+      "id": "454fb629-443f-488b-44ff-2c29b1595fa1",
+      "actorName": "Sales User",
+      "actorEmail": "sales@tixora.local",
+      "actorRole": "sales",
+      "action": "Updated status of ticket TIX-1002 to In Progress",
+      "created_at": "2026-07-17T20:10:00.000Z"
     }
   ]
 }
 ```
 
-Powered by `Activity.find().populate('actor', 'name email role').sort({ createdAt: -1 }).limit(20)`.
-
 ---
 
-## `GET /api/contacts`
+### 12. `GET /api/contacts`
 
-Contacts list. Bearer required. Alphabetical by `name`.
+Fetches support contacts sorted alphabetically.
+
+#### Sample Request
 
 ```bash
-curl http://localhost:4000/api/contacts -H "Authorization: Bearer $JWT"
+curl -X GET http://localhost:4000/api/contacts \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
-**Response 200**
+#### Response (200 OK)
 
 ```json
 {
   "data": [
     {
-      "id": "65...",
+      "id": "111fb629-111f-488b-11ff-2c29b1595fc1",
+      "name": "Alice Johnson",
+      "email": "alice@example.com",
+      "avatar": "https://i.pravatar.cc/150?u=alice",
+      "linkedUserRole": null
+    },
+    {
+      "id": "e89fb739-163f-4228-89f0-2c29b1595fc2",
       "name": "Sales User",
       "email": "sales@tixora.local",
       "avatar": "https://i.pravatar.cc/150?u=sales",
       "linkedUserRole": "sales"
-    },
-    {
-      "id": "65...",
-      "name": "Natali Craig",
-      "email": "natali.craig@example.com",
-      "avatar": "https://i.pravatar.cc/150?u=natali",
-      "linkedUserRole": null
     }
   ]
 }
 ```
 
-`linkedUserRole` is `null` for external contacts (no linked system user). `email` falls back to the linked user's email when the contact entry doesn't have one of its own.
-
 ---
 
-## `GET /api/notifications`
+### 13. `GET /api/notifications`
 
-Role-scoped notifications. Bearer required.
+Resolves notifications according to the active token's role.
 
-- Admin: sees all audiences (`admin | sales | all`).
-- Sales: sees `sales` + `all` (no admin-only entries).
+- **Scope Enforcements**: Admins resolve all. Sales resolve only those tagged as `sales` or `all`.
+
+#### Sample Request
 
 ```bash
-curl http://localhost:4000/api/notifications -H "Authorization: Bearer $JWT"
+curl -X GET http://localhost:4000/api/notifications \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
-**Response 200**
+#### Response (200 OK)
 
 ```json
 {
   "data": [
     {
-      "id": "65...",
-      "kind": "bug",
-      "message": "Lead duplication detected on import.",
-      "audience": "admin",
-      "createdAt": "2026-05-19T14:28:00.000Z"
-    },
-    {
-      "id": "65...",
+      "id": "999fb629-999f-488b-99ff-2c29b1595fd9",
       "kind": "lead-status",
-      "message": "3 leads moved to Qualified this morning.",
+      "message": "3 support tickets completed this morning.",
       "audience": "all",
-      "createdAt": "2026-05-19T11:30:00.000Z"
+      "created_at": "2026-07-17T12:30:00.000Z"
     }
   ]
 }
 ```
 
-Sorted by `createdAt` descending. The `kind` field maps to an icon + color in the right-drawer UI (`bug`, `user`, `lead-status`, `subscribe`; unknown kinds get a fallback).
+- `kind` maps to custom icons and badges (`bug`, `user`, `lead-status`, `subscribe`).
