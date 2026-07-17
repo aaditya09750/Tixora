@@ -1,5 +1,4 @@
 * text=auto eol=lf
-
 *.png binary
 *.jpg binary
 *.jpeg binary
@@ -8,7 +7,7 @@
 *.webp binary
 *.pdf binary
 *.zip binary
-
 pnpm-lock.yaml -diff linguist-generated
 package-lock.json -diff linguist-generated
 yarn.lock -diff linguist-generated
+*.mp4 filter=lfs diff=lfs merge=lfs -text
